@@ -9,21 +9,23 @@
  * - 成员负荷（悬浮含截止日期 + 逾期标红）
  */
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Card, Row, Col, Progress, Table, Tag, Statistic, Spin, Empty, List, Tabs, Checkbox, Tooltip,
+  Card, Row, Col, Progress, Table, Tag, Statistic, Spin, Empty, List, Tabs, Checkbox, Tooltip, Modal, Pagination,
 } from "antd";
 import {
   ProjectOutlined, CheckCircleOutlined, TeamOutlined, ThunderboltOutlined,
   SyncOutlined, CheckCircleFilled, ClockCircleOutlined, FileSearchOutlined,
-  WarningOutlined, ArrowRightOutlined,
+  WarningOutlined, ArrowRightOutlined, FileTextOutlined, ApartmentOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
-import { useDashboardStore } from "@/store";
+import { useDashboardStore, useAuthStore } from "@/store";
 import { requirementApi, myTaskApi, recurringTaskApi } from "@/api";
 import { PRIORITY_LABELS, CYCLE_LABELS } from "@/types";
 import type { RequirementSummary, MemberWorkload, Task, MyTaskItem } from "@/types";
+import DeliveryReport from "./DeliveryReport";
+import AlignmentMap from "./AlignmentMap";
 
 interface TipTask { title: string; status: string; assignee?: string | null; due_date?: string | null }
 
@@ -38,7 +40,11 @@ const STATUS_CFG: Record<string, { color: string; bg: string; icon: React.ReactN
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuthStore();
+  const canReport = user?.role === "CLIENT" || user?.role === "MANAGER" || user?.role === "DEVELOPER";
   const { data, loading, fetchData } = useDashboardStore();
+  const [reportReq, setReportReq] = useState<{ id: number; title: string } | null>(null);
+  const [alignModalReq, setAlignModalReq] = useState<{ id: number; title: string } | null>(null);
   const [hoverTip, setHoverTip] = useState<{ x: number; y: number; title: string; tasks: TipTask[]; loading: boolean } | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -46,9 +52,31 @@ export default function Dashboard() {
   const [deadlineTasks, setDeadlineTasks] = useState<(MyTaskItem & { assignee: string })[]>([]);
   const [deadlineLoading, setDeadlineLoading] = useState(false);
 
+  // 历史需求数据
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const PAGE_SIZE = 10;
+
+  const loadHistory = async (page = 1) => {
+    setHistoryLoading(true);
+    try {
+      const res = await requirementApi.history(page, PAGE_SIZE);
+      setHistoryItems(res.data);
+      setHistoryTotal(res.total);
+      setHistoryPage(res.page);
+    } catch {
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
     loadDeadlineTasks();
+    loadHistory();
   }, [fetchData]);
 
   /** 获取截止日期预警（后端聚合接口，一次调用） */
@@ -125,6 +153,30 @@ export default function Dashboard() {
         </div>
       ),
     },
+    ...(canReport
+      ? [{
+          title: "", key: "report", width: 50,
+          render: (_: unknown, r: RequirementSummary) => (
+            <Tooltip title="生成交付报告">
+              <FileTextOutlined
+                style={{ color: "#1677ff", cursor: "pointer", fontSize: 16 }}
+                onClick={() => setReportReq({ id: r.id, title: r.title })}
+              />
+            </Tooltip>
+          ),
+        }]
+      : []),
+    {
+      title: "", key: "alignment", width: 40,
+      render: (_: unknown, r: RequirementSummary) => (
+        <Tooltip title="对齐视图">
+          <ApartmentOutlined
+            style={{ color: "#722ed1", cursor: "pointer", fontSize: 16 }}
+            onClick={() => setAlignModalReq({ id: r.id, title: r.title })}
+          />
+        </Tooltip>
+      ),
+    },
   ];
 
   const tabItems = [
@@ -185,6 +237,73 @@ export default function Dashboard() {
               )} />
           </>
         ) : <Empty description="今天没有到期的循环任务" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+      ),
+    },
+    {
+      key: "history",
+      label: <span><FileTextOutlined /> 历史需求</span>,
+      children: (
+        <Spin spinning={historyLoading}>
+          {historyItems.length > 0 ? (
+            <>
+              <Table
+                dataSource={historyItems}
+                rowKey="id"
+                pagination={false}
+                size="small"
+                columns={[
+                  { title: "需求名称", dataIndex: "title", key: "title", ellipsis: true,
+                    render: (v: string, r: any) => (
+                      <span>{v} <Tag style={{ marginLeft: 4 }}>{r.version}</Tag></span>
+                    ),
+                  },
+                  { title: "状态", dataIndex: "status", key: "status", width: 90,
+                    render: (s: string) => (
+                      <Tag color={s === "completed" ? "green" : "default"}>
+                        {s === "completed" ? "已完成" : "已归档"}
+                      </Tag>
+                    ),
+                  },
+                  { title: "进度", key: "progress", width: 140,
+                    render: (_: unknown, r: any) => (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <Progress percent={r.progress} size="small" style={{ flex: 1, marginBottom: 0 }}
+                          strokeColor={r.progress === 100 ? "#52c41a" : "#1677ff"} />
+                        <span style={{ fontSize: 12, color: "#999", whiteSpace: "nowrap" }}>
+                          {r.done_tasks}/{r.total_tasks}
+                        </span>
+                      </div>
+                    ),
+                  },
+                  { title: "操作", key: "action", width: 100,
+                    render: (_: unknown, r: any) => (
+                      canReport && (
+                        <Tooltip title="生成交付报告">
+                          <FileTextOutlined style={{ fontSize: 16, cursor: "pointer", color: "#1677ff" }}
+                            onClick={() => setReportReq({ id: r.id, title: r.title })} />
+                        </Tooltip>
+                      )
+                    ),
+                  },
+                ]}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+                <Pagination
+                  current={historyPage}
+                  total={historyTotal}
+                  pageSize={PAGE_SIZE}
+                  showTotal={(total) => `共 ${total} 条`}
+                  onChange={(page) => {
+                    loadHistory(page);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <Empty description="暂无历史需求" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+        </Spin>
       ),
     },
   ];
@@ -351,6 +470,33 @@ export default function Dashboard() {
           )}
         </div>
       )}
+
+      {/* 交付报告弹窗 */}
+      {reportReq && (
+        <DeliveryReport
+          requirementId={reportReq.id}
+          requirementTitle={reportReq.title}
+          open={!!reportReq}
+          onClose={() => setReportReq(null)}
+        />
+      )}
+
+      {/* 对齐视图弹窗 */}
+      <Modal
+        title={<span>🎯 对齐视图：{alignModalReq?.title}</span>}
+        open={!!alignModalReq}
+        onCancel={() => setAlignModalReq(null)}
+        footer={null}
+        width="90vw"
+        style={{ top: 20 }}
+        styles={{ body: { height: "70vh", padding: 0, overflow: "hidden" } }}
+      >
+        {alignModalReq && (
+          <div style={{ height: "100%" }}>
+            <AlignmentMap epicId={alignModalReq.id} />
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

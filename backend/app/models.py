@@ -8,8 +8,8 @@ SQLAlchemy 数据模型定义
 
 from datetime import datetime, date
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Date, Boolean, ForeignKey, Enum as SAEnum,
-    UniqueConstraint
+    Column, Integer, String, Text, DateTime, Date, Boolean, Float,
+    ForeignKey, Enum as SAEnum, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -17,6 +17,13 @@ import enum
 
 
 # ==================== 枚举类型定义 ====================
+
+class UserRole(str, enum.Enum):
+    """用户角色枚举"""
+    CLIENT = "CLIENT"       # 需求方
+    MANAGER = "MANAGER"     # 管理方（主管）
+    DEVELOPER = "DEVELOPER" # 执行者（开发/设计）
+
 
 class RequirementStatus(str, enum.Enum):
     """需求状态枚举"""
@@ -34,6 +41,14 @@ class RequirementPriority(str, enum.Enum):
     URGENT = "urgent"    # 紧急
 
 
+class RequirementType(str, enum.Enum):
+    """需求类型枚举"""
+    FEATURE = "feature"          # 新功能
+    OPTIMIZATION = "optimization"  # 优化
+    BUGFIX = "bugfix"            # 修复
+    DATA = "data"                # 数据支持
+
+
 class TaskStatus(str, enum.Enum):
     """任务状态枚举"""
     TODO = "todo"           # 待办
@@ -43,6 +58,36 @@ class TaskStatus(str, enum.Enum):
 
 
 # ==================== 核心数据模型 ====================
+
+class User(Base):
+    """
+    用户表（认证系统）
+
+    管理登录账号、密码和角色。
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, comment="用户ID")
+    username = Column(String(50), nullable=False, unique=True, comment="登录名")
+    password_hash = Column(String(255), nullable=False, comment="密码哈希")
+    role = Column(
+        SAEnum(UserRole),
+        default=UserRole.DEVELOPER,
+        nullable=False,
+        comment="角色: CLIENT/MANAGER/DEVELOPER"
+    )
+    member_id = Column(
+        Integer, ForeignKey("members.id", ondelete="SET NULL"),
+        nullable=True, comment="关联的团队成员ID"
+    )
+    is_active = Column(Boolean, default=True, comment="是否启用")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+
+    member = relationship("Member", backref="users")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, username='{self.username}', role='{self.role}')>"
+
 
 class Member(Base):
     """
@@ -55,6 +100,8 @@ class Member(Base):
     id = Column(Integer, primary_key=True, index=True, comment="成员ID")
     name = Column(String(50), nullable=False, unique=True, comment="成员姓名")
     role = Column(String(100), nullable=True, comment="角色/职位")
+    title = Column(String(100), nullable=True, comment="职称（如：高级前端工程师）")
+    initial_password = Column(String(100), nullable=True, comment="初始密码（明文，仅用于前端展示提示）")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
 
     def __repr__(self):
@@ -75,6 +122,12 @@ class Requirement(Base):
     description = Column(Text, nullable=True, comment="需求描述")
     department = Column(String(100), nullable=True, comment="所属部门")
     doc_link = Column(String(500), nullable=True, comment="文档链接")
+    background = Column(Text, nullable=True, comment="业务背景与目标")
+    acceptance_criteria = Column(Text, nullable=True, comment="验收标准")
+    needs_data_extraction = Column(Boolean, default=False, nullable=True, comment="是否涉及数据提取")
+    data_connection_info = Column(Text, nullable=True, comment="数据连接地址")
+    operation_steps = Column(Text, nullable=True, comment="取数操作步骤（文字说明）")
+    operation_screenshots = Column(Text, nullable=True, comment="操作截图URL列表(JSON数组)")
     version = Column(String(50), nullable=False, default="v1.0", comment="版本号，如 v1.0、v2.0")
     status = Column(
         SAEnum(RequirementStatus),
@@ -86,6 +139,13 @@ class Requirement(Base):
         default=RequirementPriority.MEDIUM,
         comment="优先级"
     )
+    req_type = Column(
+        SAEnum(RequirementType),
+        default=RequirementType.FEATURE,
+        comment="需求类型: feature/optimization/bugfix/data"
+    )
+    target_date = Column(Date, nullable=True, comment="期望交付日期")
+    reference_links = Column(Text, nullable=True, comment="外部参考链接(JSON数组)")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
 
@@ -110,10 +170,18 @@ class Task(Base):
         Integer,
         ForeignKey("requirements.id", ondelete="CASCADE"),
         nullable=False,
-        comment="关联的需求ID"
+        comment="关联的需求ID（一级任务）"
+    )
+    level = Column(Integer, default=2, nullable=False, comment="任务层级：2=执行任务, 3=行动计划")
+    parent_id = Column(
+        Integer,
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="父任务ID（三级任务指向二级任务）"
     )
     title = Column(String(200), nullable=False, comment="任务标题")
     description = Column(Text, nullable=True, comment="任务描述")
+    task_type = Column(String(50), nullable=True, comment="任务类型")
     assignee = Column(String(50), nullable=True, comment="负责人")
     status = Column(
         SAEnum(TaskStatus),
@@ -121,11 +189,14 @@ class Task(Base):
         comment="任务状态"
     )
     due_date = Column(DateTime, nullable=True, comment="截止日期")
+    estimated_hours = Column(Float, nullable=True, comment="预估工时（三级任务）")
+    actual_hours = Column(Float, nullable=True, comment="实际工时（三级任务）")
     created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
 
-    # 关联关系：每个任务属于一个需求
+    # 关联关系
     requirement = relationship("Requirement", back_populates="tasks")
+    parent = relationship("Task", remote_side="Task.id", backref="children")
 
     def __repr__(self):
         return f"<Task(id={self.id}, title='{self.title}', assignee='{self.assignee}')>"
@@ -214,3 +285,26 @@ class Comment(Base):
 
     def __repr__(self):
         return f"<Comment(id={self.id}, author='{self.author}')>"
+
+
+class Notification(Base):
+    """
+    站内消息通知
+
+    当任务状态发生关键流转时（如二级任务进入待验收），
+    系统自动向对应的责任人推送通知。
+    """
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True, comment="通知ID")
+    recipient_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, comment="接收人ID")
+    title = Column(String(200), nullable=False, comment="消息标题")
+    content = Column(Text, nullable=False, comment="消息内容")
+    is_read = Column(Boolean, default=False, nullable=False, comment="是否已读")
+    reference_task_id = Column(Integer, ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True, comment="关联任务ID")
+    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+
+    recipient = relationship("User", backref="notifications")
+
+    def __repr__(self):
+        return f"<Notification(id={self.id}, title='{self.title}', is_read={self.is_read})>"

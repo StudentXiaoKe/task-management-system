@@ -9,7 +9,7 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$ROOT/backend"
 FRONTEND_DIR="$ROOT/frontend"
-BACKEND_PORT=8000
+BACKEND_PORT=8001
 FRONTEND_PORT=5173
 
 echo ""
@@ -101,12 +101,29 @@ else
 
     # 安装依赖
     echo "       安装依赖..."
-    $PYTHON -m pip install -r requirements.txt -q 2>/dev/null
+    $PYTHON -m pip install -r requirements.txt
+    if [ $? -ne 0 ]; then
+        echo " [错误] 后端依赖安装失败！"
+        exit 1
+    fi
 
     # 后台启动
     $PYTHON -m uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT &
     BACKEND_PID=$!
-    echo "       后端 PID: $BACKEND_PID  http://localhost:$BACKEND_PORT"
+
+    # 等待后端就绪
+    echo "       等待后端启动..."
+    for i in $(seq 1 30); do
+        if curl -s http://localhost:$BACKEND_PORT/api/health >/dev/null 2>&1; then
+            echo "       后端就绪! (${i}s)  http://localhost:$BACKEND_PORT"
+            break
+        fi
+        sleep 1
+        if [ $i -eq 30 ]; then
+            echo " [错误] 后端 30 秒内未启动成功！"
+            exit 1
+        fi
+    done
     echo "       API 文档: http://localhost:$BACKEND_PORT/docs"
 fi
 echo ""

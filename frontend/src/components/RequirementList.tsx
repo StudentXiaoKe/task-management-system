@@ -24,6 +24,10 @@ import {
   Col,
   Statistic,
   Tooltip,
+  Switch,
+  Upload,
+  Image,
+  DatePicker,
 } from "antd";
 import {
   PlusOutlined,
@@ -37,21 +41,29 @@ import {
   UserOutlined,
   SearchOutlined,
   LinkOutlined,
+  FileTextOutlined,
+  UploadOutlined,
   ProjectOutlined,
   ThunderboltOutlined,
-  FileTextOutlined,
 } from "@ant-design/icons";
-import { useRequirementStore, useTaskStore } from "@/store";
+import { useRequirementStore, useTaskStore, useAuthStore } from "@/store";
 import {
   RequirementStatus,
   RequirementPriority,
+  RequirementType,
   STATUS_LABELS,
   PRIORITY_LABELS,
+  REQUIREMENT_TYPE_LABELS,
 } from "@/types";
 import type { Requirement, RequirementCreate } from "@/types";
+import DeliveryReport from "./DeliveryReport";
 
 const PRIORITY_COLORS: Record<string, string> = {
   low: "default", medium: "blue", high: "orange", urgent: "red",
+};
+
+const REQ_TYPE_COLORS: Record<string, string> = {
+  feature: "blue", optimization: "cyan", bugfix: "red", data: "purple",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -69,6 +81,9 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export default function RequirementList() {
+  const { user } = useAuthStore();
+  const canCreate = user?.role === "CLIENT" || user?.role === "MANAGER";
+  const canDelete = user?.role === "MANAGER";
   const {
     requirements, loading,
     fetchRequirements, createRequirement, updateRequirement, deleteRequirement,
@@ -78,6 +93,7 @@ export default function RequirementList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editItem, setEditItem] = useState<Requirement | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [reportReq, setReportReq] = useState<Requirement | null>(null);
   const [selectedReq, setSelectedReq] = useState<Requirement | null>(null);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
@@ -116,7 +132,15 @@ export default function RequirementList() {
       form.setFieldsValue({
         title: item.title, description: item.description,
         department: item.department, doc_link: item.doc_link,
+        background: item.background, acceptance_criteria: item.acceptance_criteria,
+        needs_data_extraction: item.needs_data_extraction || false,
+        data_connection_info: item.data_connection_info,
+        operation_steps: item.operation_steps,
+        operation_screenshots: item.operation_screenshots ? JSON.parse(item.operation_screenshots) : [],
         version: item.version, status: item.status, priority: item.priority,
+        req_type: item.req_type || RequirementType.FEATURE,
+        target_date: item.target_date || null,
+        reference_links: item.reference_links || null,
       });
     }
     setModalOpen(true);
@@ -125,9 +149,15 @@ export default function RequirementList() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
+      const payload = {
+        ...values,
+        operation_screenshots: values.operation_screenshots?.length
+          ? JSON.stringify(values.operation_screenshots)
+          : null,
+      };
       const ok = editItem
-        ? await updateRequirement(editItem.id, values)
-        : await createRequirement(values as RequirementCreate);
+        ? await updateRequirement(editItem.id, payload)
+        : await createRequirement(payload as RequirementCreate);
       if (ok) { setModalOpen(false); fetchRequirements(); }
     } catch {}
   };
@@ -163,6 +193,9 @@ export default function RequirementList() {
             <Tag color="blue" style={{ fontSize: 11 }}>{r.version}</Tag>
             <Tag color={PRIORITY_COLORS[r.priority]} style={{ fontSize: 11 }}>
               {PRIORITY_LABELS[r.priority]}
+            </Tag>
+            <Tag color={REQ_TYPE_COLORS[r.req_type || "feature"]} style={{ fontSize: 11 }}>
+              {REQUIREMENT_TYPE_LABELS[r.req_type || "feature"]}
             </Tag>
             {r.department && <Tag style={{ fontSize: 11 }}>{r.department}</Tag>}
           </Space>
@@ -231,12 +264,18 @@ export default function RequirementList() {
             <Button type="text" size="small" icon={<EditOutlined />}
               onClick={() => openModal(r)} />
           </Tooltip>
-          <Popconfirm title="确定删除？" description="将同时删除所有子任务"
-            onConfirm={() => handleDelete(r.id)}>
-            <Tooltip title="删除">
-              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-            </Tooltip>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm title="确定删除？" description="将同时删除所有子任务"
+              onConfirm={() => handleDelete(r.id)}>
+              <Tooltip title="删除">
+                <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
+          <Tooltip title="交付报告">
+            <Button type="text" size="small" icon={<FileTextOutlined />}
+              onClick={() => setReportReq(r)} />
+          </Tooltip>
         </Space>
       ),
     },
@@ -280,9 +319,11 @@ export default function RequirementList() {
       <Card
         title={<span style={{ fontWeight: 600, fontSize: 16 }}>需求列表</span>}
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
-            新建需求
-          </Button>
+          canCreate && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal()}>
+              新建需求
+            </Button>
+          )
         }
       >
         {/* 筛选栏 */}
@@ -328,51 +369,172 @@ export default function RequirementList() {
       <Modal
         title={editItem ? "编辑需求" : "新建需求"}
         open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)}
-        okText="保存" cancelText="取消" width={560}
+        okText="保存" cancelText="取消" width={720}
       >
         <Form form={form} layout="vertical"
-          initialValues={{ version: "v1.0", status: RequirementStatus.PLANNING, priority: RequirementPriority.MEDIUM }}>
+          initialValues={{
+            version: "v1.0", status: RequirementStatus.PLANNING,
+            priority: RequirementPriority.MEDIUM, req_type: RequirementType.FEATURE,
+          }}>
+          {/* 标题 + 描述：全宽 */}
           <Form.Item name="title" label="需求标题" rules={[{ required: true, message: "请输入需求标题" }]}>
             <Input placeholder="请输入需求标题" maxLength={200} />
           </Form.Item>
-          <Form.Item name="description" label="需求描述">
-            <Input.TextArea placeholder="请输入需求描述" rows={3} maxLength={2000} />
-          </Form.Item>
           <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="department" label="所属部门">
-                <Input placeholder="如：产品部、运营部" maxLength={100} />
+            {/* ======== 左栏：主内容 (Col 15) ======== */}
+            <Col span={15}>
+              <Form.Item name="description" label="需求描述">
+                <Input.TextArea placeholder="请输入需求描述" rows={3} maxLength={2000} />
+              </Form.Item>
+              <Form.Item name="background" label="业务背景与目标">
+                <Input.TextArea placeholder="需要解决什么问题，业务目标是什么" rows={3} maxLength={2000} />
+              </Form.Item>
+              <Form.Item name="acceptance_criteria" label="验收标准">
+                <Input.TextArea placeholder="明确的验收标准和交付物" rows={3} maxLength={2000} />
+              </Form.Item>
+              <Form.Item name="doc_link" label="文档链接">
+                <Input placeholder="粘贴文档链接（飞书/Confluence/语雀等）" maxLength={500}
+                  prefix={<LinkOutlined style={{ color: "#bbb" }} />} />
               </Form.Item>
             </Col>
-            <Col span={12}>
-              <Form.Item name="version" label="版本号" rules={[{ required: true, message: "请输入版本号" }]}>
-                <Input placeholder="如 v1.0、v2.0" maxLength={50} />
-              </Form.Item>
+            {/* ======== 右栏：属性面板 (Col 9) ======== */}
+            <Col span={9}>
+              <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 12px 4px", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: "#8c8c8c", fontWeight: 600, marginBottom: 12, letterSpacing: 0.5 }}>
+                  属性
+                </div>
+                <Form.Item name="req_type" label="需求类型" style={{ marginBottom: 12 }}>
+                  <Select options={[
+                    { value: "feature", label: "新功能" },
+                    { value: "optimization", label: "优化" },
+                    { value: "bugfix", label: "修复" },
+                    { value: "data", label: "数据支持" },
+                  ]} />
+                </Form.Item>
+                <Form.Item name="priority" label="优先级" style={{ marginBottom: 12 }}>
+                  <Select options={[
+                    { value: "urgent", label: "紧急" },
+                    { value: "high", label: "高" },
+                    { value: "medium", label: "中" },
+                    { value: "low", label: "低" },
+                  ]} />
+                </Form.Item>
+                <Form.Item name="status" label="状态" style={{ marginBottom: 12 }}>
+                  <Select options={[
+                    { value: "planning", label: "规划中" },
+                    { value: "in_progress", label: "进行中" },
+                    { value: "completed", label: "已完成" },
+                    { value: "archived", label: "已归档" },
+                  ]} />
+                </Form.Item>
+                <Row gutter={8}>
+                  <Col span={12}>
+                    <Form.Item name="department" label="所属部门" style={{ marginBottom: 12 }}>
+                      <Input placeholder="产品部" maxLength={100} />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="version" label="版本号" rules={[{ required: true, message: "必填" }]}
+                      style={{ marginBottom: 12 }}>
+                      <Input placeholder="v1.0" maxLength={50} />
+                    </Form.Item>
+                  </Col>
+                </Row>
+                <Form.Item name="target_date" label="期望交付日期" style={{ marginBottom: 12 }}>
+                  <DatePicker placeholder="选择日期" style={{ width: "100%" }} />
+                </Form.Item>
+              </div>
             </Col>
           </Row>
-          <Form.Item name="doc_link" label="文档链接">
-            <Input placeholder="粘贴文档链接（飞书/Confluence/语雀等）" maxLength={500}
-              prefix={<LinkOutlined style={{ color: "#bbb" }} />} />
+          <Form.Item
+            name="needs_data_extraction"
+            label="是否涉及数据提取"
+            valuePropName="checked"
+          >
+            <Switch checkedChildren="是" unCheckedChildren="否" />
           </Form.Item>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="status" label="状态">
-                <Select>
-                  {Object.entries(STATUS_LABELS)
-                    .filter(([k]) => ["planning", "in_progress", "completed", "archived"].includes(k))
-                    .map(([v, l]) => <Select.Option key={v} value={v}>{l}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="priority" label="优先级">
-                <Select>
-                  {Object.entries(PRIORITY_LABELS).map(([v, l]) =>
-                    <Select.Option key={v} value={v}>{l}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, cur) => prev.needs_data_extraction !== cur.needs_data_extraction}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue("needs_data_extraction") ? (
+                <>
+                  <Form.Item name="data_connection_info" label="数据连接地址">
+                    <Input.TextArea placeholder="数据库连接地址、API 地址等" rows={2} maxLength={1000} />
+                  </Form.Item>
+                  <Form.Item name="operation_steps" label="操作步骤">
+                    <Input.TextArea
+                      placeholder={"请按步骤描述取数操作流程，例如：\n1. 登录数据库管理系统\n2. 执行查询 SQL: SELECT ...\n3. 导出为 CSV 格式"}
+                      rows={5}
+                      maxLength={5000}
+                    />
+                  </Form.Item>
+                  <Form.Item name="operation_screenshots" label="操作截图">
+                    <Upload
+                      listType="picture-card"
+                      multiple
+                      maxCount={9}
+                      beforeUpload={(file) => {
+                        return new Promise((resolve) => {
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const current = form.getFieldValue("operation_screenshots") || [];
+                            form.setFieldsValue({
+                              operation_screenshots: [...current, reader.result],
+                            });
+                          };
+                          reader.readAsDataURL(file);
+                          resolve(false);
+                        });
+                      }}
+                      onRemove={(file) => {
+                        const current = form.getFieldValue("operation_screenshots") || [];
+                        const idx = parseInt(file.uid, 10);
+                        form.setFieldsValue({
+                          operation_screenshots: current.filter((_: string, i: number) => i !== idx),
+                        });
+                      }}
+                      fileList={[]}
+                    >
+                      <div>
+                        <UploadOutlined />
+                        <div style={{ marginTop: 8, fontSize: 12 }}>上传截图</div>
+                      </div>
+                    </Upload>
+                    {(() => {
+                      const screenshots = form.getFieldValue("operation_screenshots") || [];
+                      return screenshots.length > 0 ? (
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                          {screenshots.map((src: string, i: number) => (
+                            <div key={i} style={{ position: "relative" }}>
+                              <Image src={src} width={80} height={80} style={{ objectFit: "cover", borderRadius: 4 }} />
+                              <span
+                                onClick={() => {
+                                  const current = form.getFieldValue("operation_screenshots") || [];
+                                  form.setFieldsValue({
+                                    operation_screenshots: current.filter((_: string, idx: number) => idx !== i),
+                                  });
+                                }}
+                                style={{
+                                  position: "absolute", top: -6, right: -6, width: 18, height: 18,
+                                  background: "#ff4d4f", color: "#fff", borderRadius: "50%",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontSize: 12, cursor: "pointer",
+                                }}
+                              >
+                                x
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
+                  </Form.Item>
+                </>
+              ) : null
+            }
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -516,10 +678,83 @@ export default function RequirementList() {
                   </div>
                 )}
               </div>
+
+              {/* ==================== 数据提取状态与指引 ==================== */}
+              {selectedReq.needs_data_extraction && (
+                (selectedReq.data_connection_info || selectedReq.operation_steps || selectedReq.operation_screenshots) && (
+                  <div style={{ padding: "16px 20px 12px", borderTop: "1px solid #f0f0f0" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>📡 数据提取指引</span>
+                      <Tag color="orange" style={{ margin: 0 }}>涉及数据提取</Tag>
+                    </div>
+
+                    <div style={{
+                      background: "#fffbe6", border: "1px solid #ffe58f", borderRadius: 8,
+                      padding: "14px 16px",
+                    }}>
+                      {/* 连接地址 */}
+                      {selectedReq.data_connection_info && (
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 12, color: "#92400e", marginBottom: 4 }}>连接地址</div>
+                          <div style={{
+                            background: "#fff", padding: "8px 10px", borderRadius: 6,
+                            fontSize: 13, color: "#374151", wordBreak: "break-all",
+                            border: "1px solid #fde68a",
+                          }}>
+                            {selectedReq.data_connection_info}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 操作步骤 */}
+                      {selectedReq.operation_steps && (
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 12, color: "#92400e", marginBottom: 4 }}>操作步骤</div>
+                          <pre style={{
+                            background: "#fff", padding: "8px 10px", borderRadius: 6,
+                            fontSize: 13, lineHeight: 1.8, color: "#374151",
+                            whiteSpace: "pre-wrap", wordBreak: "break-word",
+                            border: "1px solid #fde68a", margin: 0,
+                          }}>
+                            {selectedReq.operation_steps}
+                          </pre>
+                        </div>
+                      )}
+
+                      {/* 操作截图 */}
+                      {selectedReq.operation_screenshots && (() => {
+                        const urls = (() => { try { return JSON.parse(selectedReq.operation_screenshots!); } catch { return []; } })();
+                        return urls.length > 0 ? (
+                          <div>
+                            <div style={{ fontSize: 12, color: "#92400e", marginBottom: 4 }}>操作截图</div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                              {urls.map((url: string, i: number) => (
+                                <img key={i} src={url} alt={`截图${i + 1}`}
+                                  style={{ maxWidth: 160, borderRadius: 6, border: "1px solid #fde68a", cursor: "pointer" }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
+                  </div>
+                )
+              )}
             </>
           );
         })()}
       </Modal>
+
+      {/* 交付报告弹窗 */}
+      {reportReq && (
+        <DeliveryReport
+          requirementId={reportReq.id}
+          requirementTitle={reportReq.title}
+          open={!!reportReq}
+          onClose={() => setReportReq(null)}
+        />
+      )}
     </div>
   );
 }

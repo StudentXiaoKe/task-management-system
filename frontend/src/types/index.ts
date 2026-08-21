@@ -22,12 +22,61 @@ export enum RequirementPriority {
   URGENT = "urgent",  // 紧急
 }
 
+/** 需求类型 */
+export enum RequirementType {
+  FEATURE = "feature",            // 新功能
+  OPTIMIZATION = "optimization",  // 优化
+  BUGFIX = "bugfix",              // 修复
+  DATA = "data",                  // 数据支持
+}
+
+/** 需求类型中文映射 */
+export const REQUIREMENT_TYPE_LABELS: Record<string, string> = {
+  feature: "新功能",
+  optimization: "优化",
+  bugfix: "修复",
+  data: "数据支持",
+};
+
 /** 任务状态 */
 export enum TaskStatus {
   TODO = "todo",               // 待办
   IN_PROGRESS = "in_progress", // 进行中
   REVIEW = "review",           // 待验收
   DONE = "done",               // 已完成
+}
+
+// ==================== 用户认证 ====================
+
+/** 用户角色 */
+export enum UserRole {
+  CLIENT = "CLIENT",       // 需求方
+  MANAGER = "MANAGER",     // 管理方
+  DEVELOPER = "DEVELOPER", // 执行者
+}
+
+/** 角色中文映射 */
+export const ROLE_LABELS: Record<string, string> = {
+  CLIENT: "需求方",
+  MANAGER: "管理方",
+  DEVELOPER: "执行者",
+};
+
+/** 用户 */
+export interface User {
+  id: number;
+  username: string;
+  role: string;
+  member_id: number | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+/** 登录响应 */
+export interface TokenResponse {
+  access_token: string;
+  token_type: string;
+  user: User;
 }
 
 // ==================== 数据接口 ====================
@@ -39,9 +88,18 @@ export interface Requirement {
   description: string | null;
   department: string | null;
   doc_link: string | null;
+  background: string | null;
+  acceptance_criteria: string | null;
+  needs_data_extraction: boolean;
+  data_connection_info: string | null;
+  operation_steps: string | null;
+  operation_screenshots: string | null;
   version: string;
   status: RequirementStatus;
   priority: RequirementPriority;
+  req_type: RequirementType;
+  target_date: string | null;
+  reference_links: string | null;
   created_at: string;
   updated_at: string;
   tasks: Task[];
@@ -53,9 +111,18 @@ export interface RequirementCreate {
   description?: string;
   department?: string;
   doc_link?: string;
+  background?: string;
+  acceptance_criteria?: string;
+  needs_data_extraction?: boolean;
+  data_connection_info?: string;
+  operation_steps?: string;
+  operation_screenshots?: string;
   version: string;
   status?: RequirementStatus;
   priority?: RequirementPriority;
+  req_type?: RequirementType;
+  target_date?: string;
+  reference_links?: string;
 }
 
 /** 需求更新参数 */
@@ -64,42 +131,81 @@ export interface RequirementUpdate {
   description?: string;
   department?: string;
   doc_link?: string;
+  background?: string;
+  acceptance_criteria?: string;
+  needs_data_extraction?: boolean;
+  data_connection_info?: string;
+  operation_steps?: string;
+  operation_screenshots?: string;
   version?: string;
   status?: RequirementStatus;
   priority?: RequirementPriority;
+  req_type?: RequirementType;
+  target_date?: string;
+  reference_links?: string;
 }
 
 /** 任务 */
 export interface Task {
   id: number;
   requirement_id: number;
+  parent_id: number | null;
+  level: number;
   title: string;
   description: string | null;
+  task_type: string | null;
   assignee: string | null;
   status: TaskStatus;
   due_date: string | null;
+  estimated_hours: number | null;
+  actual_hours: number | null;
   created_at: string;
   updated_at: string;
+  children?: Task[];
 }
 
 /** 任务创建参数 */
 export interface TaskCreate {
   requirement_id: number;
+  parent_id?: number;
+  level?: number;
   title: string;
   description?: string;
+  task_type?: string;
   assignee?: string;
   status?: TaskStatus;
   due_date?: string;
+  estimated_hours?: number;
+  actual_hours?: number;
 }
 
 /** 任务更新参数 */
 export interface TaskUpdate {
   title?: string;
   description?: string;
+  task_type?: string;
   assignee?: string;
   status?: TaskStatus;
   due_date?: string;
+  estimated_hours?: number;
+  actual_hours?: number;
 }
+
+/** 任务进度 */
+export interface TaskProgress {
+  total: number;
+  done: number;
+  progress: number;
+}
+
+/** 任务类型选项 */
+export const TASK_TYPES = [
+  "数据爬取",
+  "指标搭建",
+  "统计口径优化",
+  "后台功能开发",
+  "功能交互优化",
+] as const;
 
 /** 需求摘要（Dashboard 用） */
 export interface RequirementSummary {
@@ -151,20 +257,32 @@ export interface DashboardData {
 export interface Member {
   id: number;
   name: string;
-  role: string | null;
+  title: string | null;
+  initial_password: string | null;
+  username: string | null;
+  system_role: string | null;
   created_at: string;
 }
+
+/** 成员角色 */
+export const MEMBER_ROLES = [
+  { value: "requester", label: "需求方" },
+  { value: "manager", label: "管理方" },
+  { value: "executor", label: "执行方" },
+] as const;
 
 /** 成员创建参数 */
 export interface MemberCreate {
   name: string;
-  role?: string;
+  title?: string;
+  username?: string;
+  password?: string;
 }
 
 /** 成员更新参数 */
 export interface MemberUpdate {
   name?: string;
-  role?: string;
+  title?: string;
 }
 
 /** 状态中文映射 */
@@ -250,6 +368,21 @@ export interface CommentCreate {
   author: string;
   requirement_id?: number;
   task_id?: number;
+}
+
+// ==================== 对齐视图 ====================
+
+/** 对齐视图树节点 */
+export interface AlignmentTreeNode {
+  id: string;
+  name: string;
+  node_type: "root" | "requirement" | "task_l2" | "task_l3";
+  status: string | null;
+  assignee: string | null;
+  progress: number | null;
+  total_tasks: number | null;
+  done_tasks: number | null;
+  children: AlignmentTreeNode[];
 }
 
 // ==================== 我的任务 ====================

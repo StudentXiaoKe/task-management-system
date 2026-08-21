@@ -1,86 +1,104 @@
 @echo off
-chcp 65001 >nul 2>&1
-
-set ROOT=%~dp0
+setlocal
+set "ROOT=%~dp0"
 set BACKEND_PORT=8001
 set FRONTEND_PORT=5173
 
 echo.
 echo ==========================================
-echo  Task Management System - Starting...
+echo  Task Management System
 echo ==========================================
 echo.
 
-REM --- Check Python ---
+REM === Step 1: Check environment ===
+echo [1/5] Checking environment...
 python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found
-    pause
-    exit /b 1
-)
-echo [OK] Python found
-
-REM --- Check Node ---
+if errorlevel 1 ( echo [ERROR] Python not found & pause & exit /b 1 )
 node --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Node.js not found
-    pause
-    exit /b 1
+if errorlevel 1 ( echo [ERROR] Node.js not found & pause & exit /b 1 )
+echo       OK
+
+REM === Step 2: Kill processes on our specific ports ===
+echo [2/5] Killing processes on ports %BACKEND_PORT% and %FRONTEND_PORT%...
+:KILL_LOOP
+set KILLED=0
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":%BACKEND_PORT%.*LISTENING"') do (
+    echo       Killing backend PID %%p
+    taskkill /F /PID %%p >nul 2>&1
+    set KILLED=1
 )
-echo [OK] Node.js found
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":%FRONTEND_PORT%.*LISTENING"') do (
+    echo       Killing frontend PID %%p
+    taskkill /F /PID %%p >nul 2>&1
+    set KILLED=1
+)
+if %KILLED%==1 (
+    timeout /t 2 /nobreak >nul
+    goto KILL_LOOP
+)
+echo       All clear
 
-echo.
-echo [1/2] Starting backend on port %BACKEND_PORT%...
-echo.
-
-REM --- Install backend deps ---
+REM === Step 3: Install dependencies & clean database ===
+echo [3/5] Installing backend dependencies...
 cd /d "%ROOT%backend"
-python -m pip install -r requirements.txt -q
+python -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo [ERROR] pip install failed
+    echo [ERROR] Backend dependency installation failed!
     pause
     exit /b 1
 )
+echo       Done
 
-REM --- Start backend in new window ---
+REM === Step 3: Start backend (auto-migrate + auto-seed on startup) ===
+echo [4/5] Starting backend...
 cd /d "%ROOT%backend"
 start "Backend" python -m uvicorn app.main:app --reload --host 0.0.0.0 --port %BACKEND_PORT%
-echo [OK] Backend window opened
 
-echo.
-echo [2/2] Starting frontend on port %FRONTEND_PORT%...
-echo.
-
-REM --- Install frontend deps if needed ---
-cd /d "%ROOT%frontend"
-if not exist node_modules (
-    echo Installing npm packages, please wait...
-    call npm install
-    if errorlevel 1 (
-        echo [ERROR] npm install failed
-        pause
-        exit /b 1
-    )
+REM Wait for backend to be ready (max 30 seconds)
+echo       Waiting for backend on port %BACKEND_PORT%...
+set WAIT_COUNT=0
+:WAIT_BACKEND
+timeout /t 1 /nobreak >nul
+set /a WAIT_COUNT+=1
+if %WAIT_COUNT% GTR 30 (
+    echo [ERROR] Backend failed to start within 30 seconds!
+    pause
+    exit /b 1
 )
+curl -s http://localhost:%BACKEND_PORT%/api/health >nul 2>&1
+if errorlevel 1 goto WAIT_BACKEND
+echo       Backend ready! (%WAIT_COUNT%s)
 
-REM --- Start frontend in new window ---
+REM === Step 4: Start frontend ===
+echo [5/5] Starting frontend...
 cd /d "%ROOT%frontend"
-start "Frontend" cmd /k npm run dev
-echo [OK] Frontend window opened
+start "Frontend" cmd /k npx vite --port %FRONTEND_PORT% --host 0.0.0.0
+
+REM Wait for frontend to be ready
+echo       Waiting for frontend on port %FRONTEND_PORT%...
+set WAIT_COUNT=0
+:WAIT_FRONTEND
+timeout /t 1 /nobreak >nul
+set /a WAIT_COUNT+=1
+if %WAIT_COUNT% GTR 30 (
+    echo [ERROR] Frontend failed to start within 30 seconds!
+    pause
+    exit /b 1
+)
+curl -s http://localhost:%FRONTEND_PORT%/ >nul 2>&1
+if errorlevel 1 goto WAIT_FRONTEND
+echo       Frontend ready! (%WAIT_COUNT%s)
 
 echo.
 echo ==========================================
-echo  Done!
-echo.
 echo  Frontend: http://localhost:%FRONTEND_PORT%
 echo  Backend:  http://localhost:%BACKEND_PORT%
-echo  Swagger:  http://localhost:%BACKEND_PORT%/docs
-echo.
-echo  Close the Backend/Frontend windows to stop
+echo  管理员:   admin / Admin@123456
+echo  需求方:   client / Client@123456
+echo  开发者:   memberA / Dev@123456
 echo ==========================================
 echo.
 
-timeout /t 4 /nobreak >nul
 start http://localhost:%FRONTEND_PORT%
 
 pause

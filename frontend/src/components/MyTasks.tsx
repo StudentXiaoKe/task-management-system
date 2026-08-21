@@ -103,8 +103,7 @@ export default function MyTasks() {
             )}
           </div>
         </div>
-        <Tag style={{ fontSize: 11 }} color={cfg.color === "#8c8c8c" ? "default" : undefined}
-          {...(cfg.color !== "#8c8c8c" ? { color: cfg.color } : {})}>
+        <Tag style={{ fontSize: 11 }} color={cfg.color === "#8c8c8c" ? undefined : cfg.color}>
           {cfg.label}
         </Tag>
       </div>

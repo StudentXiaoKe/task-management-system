@@ -2,7 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-export default defineConfig({
+// https://vite.dev/config/
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/tasks/' : '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -10,7 +12,9 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
     port: 5173,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8001',
@@ -18,4 +22,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

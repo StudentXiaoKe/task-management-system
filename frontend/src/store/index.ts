@@ -25,8 +25,72 @@ import type {
   Comment,
   CommentCreate,
   MyTaskItem,
+  User,
+  TokenResponse,
+  AlignmentTreeNode,
 } from "@/types";
-import { requirementApi, taskApi, dashboardApi, memberApi, recurringTaskApi, commentApi, myTaskApi } from "@/api";
+import { requirementApi, taskApi, dashboardApi, memberApi, recurringTaskApi, commentApi, myTaskApi, authApi, alignmentApi, notificationApi } from "@/api";
+
+// ==================== 认证 Store ====================
+
+interface AuthStore {
+  user: User | null;
+  token: string | null;
+  loading: boolean;
+  login: (username: string, password: string) => Promise<boolean>;
+  logout: () => void;
+  loadFromStorage: () => void;
+}
+
+// 启动时同步读取 localStorage，避免首次渲染被 ProtectedRoute 踢出
+function _loadAuthFromStorage(): { user: User | null; token: string | null } {
+  const token = localStorage.getItem("access_token");
+  const userStr = localStorage.getItem("current_user");
+  if (token && userStr) {
+    try { return { user: JSON.parse(userStr), token }; } catch {
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("current_user");
+    }
+  }
+  return { user: null, token: null };
+}
+
+const _initialAuth = _loadAuthFromStorage();
+
+export const useAuthStore = create<AuthStore>((set) => ({
+  user: _initialAuth.user,
+  token: _initialAuth.token,
+  loading: false,
+
+  login: async (username, password) => {
+    set({ loading: true });
+    try {
+      const res = await authApi.login(username, password);
+      localStorage.setItem("access_token", res.access_token);
+      localStorage.setItem("current_user", JSON.stringify(res.user));
+      set({ user: res.user, token: res.access_token });
+      message.success(`欢迎回来，${res.user.username}`);
+      return true;
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      message.error(detail || "登录失败，请检查网络连接");
+      console.error("[Login Error]", err);
+      return false;
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  logout: () => {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("current_user");
+    set({ user: null, token: null });
+    message.info("已退出登录");
+  },
+
+  // 已在模块初始化时从 localStorage 读取，此处保持空实现以兼容 App.tsx 调用
+  loadFromStorage: () => {},
+}));
 
 // ==================== 需求 Store ====================
 
@@ -113,6 +177,8 @@ interface TaskStore {
     requirement_id?: number;
     assignee?: string;
     status?: string;
+    level?: number;
+    parent_id?: number;
   }) => Promise<void>;
   createTask: (data: TaskCreate) => Promise<boolean>;
   updateTask: (id: number, data: TaskUpdate) => Promise<boolean>;
@@ -212,9 +278,10 @@ interface MemberStore {
   members: Member[];
   loading: boolean;
   fetchMembers: () => Promise<void>;
-  createMember: (data: MemberCreate) => Promise<boolean>;
+  createMember: (data: MemberCreate & { username?: string; password?: string; title?: string }) => Promise<boolean>;
   updateMember: (id: number, data: MemberUpdate) => Promise<boolean>;
   deleteMember: (id: number) => Promise<boolean>;
+  resetPassword: (memberId: number, newPassword?: string) => Promise<boolean>;
 }
 
 export const useMemberStore = create<MemberStore>((set, get) => ({
@@ -265,6 +332,18 @@ export const useMemberStore = create<MemberStore>((set, get) => ({
       return true;
     } catch {
       message.error("删除成员失败");
+      return false;
+    }
+  },
+
+  resetPassword: async (memberId, newPassword) => {
+    try {
+      const res = await memberApi.resetPassword(memberId, newPassword);
+      message.success(`密码重置成功，账号：${res.username}`);
+      return true;
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      message.error(detail || "重置密码失败");
       return false;
     }
   },
@@ -439,5 +518,72 @@ export const useMyTaskStore = create<MyTaskStore>((set) => ({
     } finally {
       set({ loading: false });
     }
+  },
+}));
+
+// ==================== 对齐视图 Store ====================
+
+interface AlignmentTreeStore {
+  tree: AlignmentTreeNode | null;
+  loading: boolean;
+  fetchTree: (rootId?: string) => Promise<void>;
+}
+
+export const useAlignmentTreeStore = create<AlignmentTreeStore>((set) => ({
+  tree: null,
+  loading: false,
+
+  fetchTree: async (rootId?: string) => {
+    set({ loading: true, tree: null });
+    try {
+      const tree = await alignmentApi.getTree(rootId);
+      set({ tree });
+    } catch {
+      message.error("获取对齐视图数据失败");
+    } finally {
+      set({ loading: false });
+    }
+  },
+}));
+
+// ==================== 消息通知 Store ====================
+
+export interface NotificationItem {
+  id: number;
+  title: string;
+  content: string;
+  reference_task_id: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+interface NotificationStore {
+  items: NotificationItem[];
+  total: number;
+  loading: boolean;
+  fetchUnread: () => Promise<void>;
+  markRead: (id: number) => Promise<void>;
+}
+
+export const useNotificationStore = create<NotificationStore>((set, get) => ({
+  items: [],
+  total: 0,
+  loading: false,
+
+  fetchUnread: async () => {
+    try {
+      const res = await notificationApi.getUnread();
+      set({ items: res.items, total: res.total });
+    } catch {
+      // 静默失败
+    }
+  },
+
+  markRead: async (id) => {
+    await notificationApi.markRead(id);
+    set({
+      items: get().items.filter((n) => n.id !== id),
+      total: get().total - 1,
+    });
   },
 }));

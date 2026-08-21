@@ -1,35 +1,34 @@
 /**
  * 主应用组件
 
- * 使用 React Router 管理页面路由，支持浏览器前进后退和 URL 直接访问。
- * 每个页面用 React.lazy 做代码分割，首屏只加载当前页面。
- * 全局 ErrorBoundary 防止子组件报错白屏。
+ * 认证流程：未登录跳转登录页，登录后显示主界面。
+ * HashRouter + React.lazy 代码分割。
  */
 
-import { lazy, Suspense, useState } from "react";
-import { HashRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
-import { ConfigProvider, Layout, Menu, theme, App as AntApp, Spin } from "antd";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
+import { ConfigProvider, Layout, Menu, theme, App as AntApp, Spin, Button, Tag, Dropdown, Badge, Popover, List } from "antd";
 import {
-  DashboardOutlined,
-  ProjectOutlined,
-  UnorderedListOutlined,
-  TeamOutlined,
-  SyncOutlined,
-  UserOutlined,
+  DashboardOutlined, ProjectOutlined, UnorderedListOutlined,
+  TeamOutlined, SyncOutlined, UserOutlined, LogoutOutlined, ApartmentOutlined, BarChartOutlined, BellOutlined,
 } from "@ant-design/icons";
 import zhCN from "antd/locale/zh_CN";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { useAuthStore, useNotificationStore } from "./store";
+import { ROLE_LABELS } from "./types";
 
+const Login = lazy(() => import("./components/Login"));
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const RequirementList = lazy(() => import("./components/RequirementList"));
 const TaskList = lazy(() => import("./components/TaskList"));
 const MemberManage = lazy(() => import("./components/MemberManage"));
 const RecurringTasks = lazy(() => import("./components/RecurringTasks"));
 const MyTasks = lazy(() => import("./components/MyTasks"));
+const AlignmentMap = lazy(() => import("./components/AlignmentMap"));
+const Reports = lazy(() => import("./components/Reports"));
 
 const { Header, Sider, Content } = Layout;
 
-/** 菜单项 */
 const menuItems = [
   { key: "/dashboard",    icon: <DashboardOutlined />,  label: "工作台" },
   { key: "/mytasks",      icon: <UserOutlined />,       label: "我的任务" },
@@ -37,34 +36,84 @@ const menuItems = [
   { key: "/tasks",        icon: <UnorderedListOutlined />, label: "任务管理" },
   { key: "/members",      icon: <TeamOutlined />,       label: "成员管理" },
   { key: "/recurring",    icon: <SyncOutlined />,       label: "循环任务" },
+  { key: "/alignment",    icon: <ApartmentOutlined />,  label: "对齐视图" },
+  { key: "/reports",      icon: <BarChartOutlined />,   label: "数据统计" },
 ];
 
-/** 加载中占位 */
 const PageLoading = () => (
   <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 300 }}>
     <Spin size="large" tip="加载中..." />
   </div>
 );
 
-/** 内部布局组件（需要在 Router 内部使用 hooks） */
+/** 全局消息铃铛 */
+function NotificationBell() {
+  const navigate = useNavigate();
+  const { items, total, fetchUnread, markRead } = useNotificationStore();
+
+  useEffect(() => {
+    fetchUnread();
+    const timer = setInterval(fetchUnread, 30000); // 每 30 秒轮询
+    return () => clearInterval(timer);
+  }, [fetchUnread]);
+
+  const handleClick = async (id: number, taskId: number | null) => {
+    await markRead(id);
+    if (taskId) navigate(`/tasks`);
+  };
+
+  return (
+    <Popover
+      trigger="click"
+      placement="bottomRight"
+      title="消息通知"
+      content={
+        items.length === 0
+          ? <div style={{ padding: "16px 8px", color: "#999", fontSize: 13 }}>暂无未读消息</div>
+          : <List
+              size="small"
+              dataSource={items}
+              style={{ width: 320, maxHeight: 360, overflow: "auto" }}
+              renderItem={(item) => (
+                <List.Item
+                  style={{ cursor: "pointer", padding: "10px 8px" }}
+                  onClick={() => handleClick(item.id, item.reference_task_id)}
+                >
+                  <div style={{ width: "100%" }}>
+                    <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>{item.title}</div>
+                    <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5 }}>{item.content}</div>
+                  </div>
+                </List.Item>
+              )}
+            />
+      }
+    >
+      <Badge count={total} size="small" offset={[-2, 2]}>
+        <BellOutlined style={{ fontSize: 18, cursor: "pointer", color: total > 0 ? "#1677ff" : "#999" }} />
+      </Badge>
+    </Popover>
+  );
+}
+
 function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuthStore();
   const [collapsed, setCollapsed] = useState(false);
 
   const currentKey = "/" + (location.pathname.split("/")[1] || "dashboard");
   const currentLabel = menuItems.find((m) => m.key === currentKey)?.label || "工作台";
 
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
       <Sider
-        collapsible
-        collapsed={collapsed}
-        onCollapse={setCollapsed}
-        style={{
-          overflow: "auto", height: "100vh", position: "fixed",
-          left: 0, top: 0, bottom: 0, background: "#001529",
-        }}
+        collapsible collapsed={collapsed} onCollapse={setCollapsed}
+        style={{ overflow: "auto", height: "100vh", position: "fixed", left: 0, top: 0, bottom: 0, background: "#001529" }}
       >
         <div style={{
           height: 64, display: "flex", alignItems: "center", justifyContent: "center",
@@ -74,21 +123,32 @@ function AppLayout() {
             {collapsed ? "TM" : "任务管理系统"}
           </span>
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[currentKey]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-        />
+        <Menu theme="dark" mode="inline" selectedKeys={[currentKey]}
+          items={menuItems} onClick={({ key }) => navigate(key)} />
       </Sider>
 
       <Layout style={{ marginLeft: collapsed ? 80 : 200, transition: "margin-left 0.2s" }}>
         <Header style={{
           background: "#fff", padding: "0 24px", display: "flex", alignItems: "center",
+          justifyContent: "space-between",
           borderBottom: "1px solid #f0f0f0", position: "sticky", top: 0, zIndex: 10,
         }}>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>{currentLabel}</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {user && (
+              <>
+                {/* 铃铛通知 */}
+                <NotificationBell />
+                <Tag color={user.role === "MANAGER" ? "orange" : user.role === "CLIENT" ? "blue" : "green"}>
+                  {ROLE_LABELS[user.role] || user.role}
+                </Tag>
+                <span style={{ fontSize: 14, color: "#333" }}>{user.username}</span>
+                <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout}>
+                  退出
+                </Button>
+              </>
+            )}
+          </div>
         </Header>
 
         <Content style={{
@@ -105,6 +165,8 @@ function AppLayout() {
                 <Route path="/tasks" element={<TaskList />} />
                 <Route path="/members" element={<MemberManage />} />
                 <Route path="/recurring" element={<RecurringTasks />} />
+                <Route path="/alignment" element={<AlignmentMap />} />
+                <Route path="/reports" element={<Reports />} />
               </Routes>
             </Suspense>
           </ErrorBoundary>
@@ -114,7 +176,17 @@ function AppLayout() {
   );
 }
 
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user } = useAuthStore();
+  if (!user) return <Navigate to="/login" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
+  const { loadFromStorage } = useAuthStore();
+
+  useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
+
   return (
     <ConfigProvider
       locale={zhCN}
@@ -122,7 +194,10 @@ export default function App() {
     >
       <AntApp>
         <HashRouter>
-          <AppLayout />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/*" element={<ProtectedRoute><AppLayout /></ProtectedRoute>} />
+          </Routes>
         </HashRouter>
       </AntApp>
     </ConfigProvider>
