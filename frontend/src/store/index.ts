@@ -88,8 +88,24 @@ export const useAuthStore = create<AuthStore>((set) => ({
     message.info("已退出登录");
   },
 
-  // 已在模块初始化时从 localStorage 读取，此处保持空实现以兼容 App.tsx 调用
-  loadFromStorage: () => {},
+  // 应用启动时验证 token 是否有效
+  loadFromStorage: async () => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      set({ user: null, token: null });
+      return;
+    }
+    try {
+      const user = await authApi.me();
+      set({ user, token });
+      localStorage.setItem("current_user", JSON.stringify(user));
+    } catch {
+      // token 无效或过期，清理登录状态
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("current_user");
+      set({ user: null, token: null });
+    }
+  },
 }));
 
 // ==================== 需求 Store ====================

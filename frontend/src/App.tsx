@@ -7,7 +7,7 @@
 
 import { lazy, Suspense, useEffect, useState } from "react";
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
-import { ConfigProvider, Layout, Menu, theme, App as AntApp, Spin, Button, Tag, Dropdown, Badge, Popover, List } from "antd";
+import { ConfigProvider, Layout, Menu, theme, App as AntApp, Spin, Button, Tag, Dropdown, Badge, Popover, List, Tooltip } from "antd";
 import {
   DashboardOutlined, ProjectOutlined, UnorderedListOutlined,
   TeamOutlined, SyncOutlined, UserOutlined, LogoutOutlined, ApartmentOutlined, BarChartOutlined, BellOutlined,
@@ -116,12 +116,19 @@ function AppLayout() {
         style={{ overflow: "auto", height: "100vh", position: "fixed", left: 0, top: 0, bottom: 0, background: "#001529" }}
       >
         <div style={{
-          height: 64, display: "flex", alignItems: "center", justifyContent: "center",
-          borderBottom: "1px solid rgba(255,255,255,0.1)",
+          height: 64, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          borderBottom: "1px solid rgba(255,255,255,0.1)", padding: "0 12px",
         }}>
-          <span style={{ color: "#fff", fontSize: collapsed ? 16 : 18, fontWeight: 600, whiteSpace: "nowrap" }}>
-            {collapsed ? "TM" : "任务管理系统"}
-          </span>
+          <Tooltip title="开发者：李廷科" placement="right">
+            <img src={import.meta.env.BASE_URL + "logo.jpg"} alt="logo" style={{
+              width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0, cursor: "pointer",
+            }} />
+          </Tooltip>
+          {!collapsed && (
+            <span style={{ color: "#fff", fontSize: 16, fontWeight: 600, whiteSpace: "nowrap" }}>
+              任务管理系统
+            </span>
+          )}
         </div>
         <Menu theme="dark" mode="inline" selectedKeys={[currentKey]}
           items={menuItems} onClick={({ key }) => navigate(key)} />
@@ -185,7 +192,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   const { loadFromStorage } = useAuthStore();
 
-  useEffect(() => { loadFromStorage(); }, [loadFromStorage]);
+  useEffect(() => {
+    loadFromStorage();
+  }, [loadFromStorage]);
 
   return (
     <ConfigProvider

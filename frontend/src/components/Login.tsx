@@ -32,6 +32,9 @@ export default function Login() {
     }}>
       <Card style={{ width: 400, borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <img src={import.meta.env.BASE_URL + "logo.jpg"} alt="logo" style={{
+            width: 72, height: 72, borderRadius: 16, objectFit: "cover", marginBottom: 12,
+          }} />
           <Title level={3} style={{ margin: 0, color: "#1a1a2e" }}>任务管理系统</Title>
           <Text type="secondary">请登录以继续</Text>
         </div>
